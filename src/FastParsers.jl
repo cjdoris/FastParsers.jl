@@ -955,23 +955,23 @@ module Examples
 
         using ...FastParsers
 
-        abstract type Type end
-        struct NumericType <: Type end
-        struct StringType <: Type end
-        struct DateType <: Type
+        abstract type ARFFType end
+        struct NumericType <: ARFFType end
+        struct StringType <: ARFFType end
+        struct DateType <: ARFFType
             format :: String
         end
-        struct NominalType <: Type
+        struct NominalType <: ARFFType
             classes :: Vector{String}
         end
 
-        abstract type Header end
-        struct DataStart <: Header end
-        struct Attribute <: Header
+        abstract type HeaderEntry end
+        struct DataStart <: HeaderEntry end
+        struct Attribute <: HeaderEntry
             name :: String
             type :: Type
         end
-        struct Relation <: Header
+        struct Relation <: HeaderEntry
             name :: String
         end
 
@@ -989,14 +989,15 @@ module Examples
         const string_t = Caseless("string").Tr(x->StringType(), StringType).Named(:string_t)
         const date_t = Seq(Caseless("date"), ws, string)[3].Tr(x->DateType(x), DateType).Named(:date_t)
         const nominal_t = Seq('{', ws, Many(Seq(string, ws)[1], delim=Seq(',', ws)), '}')[3].Tr(x->NominalType(x), NominalType).Named(:nominal_t)
-        const type = Or{Type}(numeric_t, string_t, date_t, nominal_t)
+        const type = Or{ARFFType}(numeric_t, string_t, date_t, nominal_t)
 
         const relation = Seq(Caseless("relation"), ws, string)[3].Tr(x->Relation(x), Relation).Named(:relation)
         const attribute = Seq(Caseless("attribute"), ws, string, ws, type)[3,5].Tr(x->Attribute(x...), Attribute).Named(:attribute)
         const datastart = Caseless("data").Tr(x->DataStart(), DataStart).Named(:data)
-        const header = Or{Header}(relation, attribute, datastart)
+        const header = Or{HeaderEntry}(relation, attribute, datastart)
         const header_line = Seq(ws, Maybe(Seq('@', header, ws)[2]), Maybe(comment))[2,3]
 
+        # TODO: sparse format
         const datum = Or(Const('?', missing), string).Named(:datum)
         const data_line = Seq(ws, Many(Seq(datum, ws)[1], delim=Seq(',', ws)), Maybe(comment))[2,3]
     end
