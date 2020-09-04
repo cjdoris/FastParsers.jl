@@ -1,0 +1,4 @@
+name = "FastParsers"
+uuid = "b38e5dfd-fc2a-4091-9be2-5098f18f2098"
+authors = ["Christopher Doris <github.com/cjdoris>"]
+version = "0.1.0"
