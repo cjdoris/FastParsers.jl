@@ -969,7 +969,7 @@ module Examples
         struct DataStart <: HeaderEntry end
         struct Attribute <: HeaderEntry
             name :: String
-            type :: Type
+            type :: ARFFType
         end
         struct Relation <: HeaderEntry
             name :: String
