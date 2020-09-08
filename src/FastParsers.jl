@@ -25,6 +25,7 @@ struct Src{T}
     src :: T
     len :: Int
 end
+Src(s) = Src(s, lastindex(s))
 
 @inline src(s::Src) = s.src
 @inline len(s::Src) = s.len
@@ -394,17 +395,18 @@ Or(ps...) = Or(map(Parser, ps)...)
 description(p::Or) = "Either"
 Caseless(p::Or{R}) where {R} = Or{R}(map(Caseless, p.parsers)...)
 
-tryparse(f::Cb, p::Or, s::Src, i::Idx) = tryparse_or(f, p.parsers, s, i)
+tryparse(f::Cb{R}, p::Or, s::Src, i::Idx) where {R} =
+    tryparse_or(f, p.parsers, s, i) :: Tuple{Ret{R}, typeof(i)}
 
-@inline tryparse_or(f::Cb, ps::Tuple{Vararg{Parser}}, s::Src, i::Idx) =
+tryparse_or(f::Cb{R}, ps::Tuple{Vararg{Parser}}, s::Src, i::Idx) where {R} =
     if isempty(ps)
         reterr(f, i)
     else
-        v, i′ = tryparse(f, ps[1], s, i)
+        v, i′ = tryparse(f, ps[1], s, i) :: Tuple{Ret{R}, typeof(i)}
         if isok(v)
             v, i′
         else
-            tryparse_or(f, ps[2:end], s, revert(i, i′))
+            tryparse_or(f, ps[2:end], s, revert(i, i′)) :: Tuple{Ret{R}, typeof(i)}
         end
     end
 
@@ -424,32 +426,45 @@ Seq(ps...) = Seq(map(Parser, ps)...)
 description(p::Seq) = "Sequence"
 Caseless(p::Seq{R}) where {R} = Seq{R}(map(Caseless, p.parsers)...)
 
-tryparse(f::Cb, p::Seq, s::Src, i::Idx) =
-    tryparse_seq(f, p.parsers, s, i, parsetype(p)==Nothing ? nothing : ())
+tryparse(f::Cb{R}, p::Seq, s::Src, i::Idx) where {R} =
+    # type annotation required for type inference through recursive function
+    tryparse_seq(f, p.parsers, s, i, parsetype(p)==Nothing ? nothing : ()) :: Tuple{Ret{R}, typeof(i)}
 
 # Inner worker function for `tryparse(f, Seq(ps), s, i)`.
 # Here, `ps` are the parsers still to run and `xs` is the value accumulated so far (either nothing or a tuple)
-tryparse_seq(f::Cb, ps::Tuple{Vararg{Parser}}, s::Src, i::Idx, xs) =
+tryparse_seq(f::Cb{R}, ps::Tuple{Vararg{Parser}}, s::Src, i::Idx, xs) where {R} =
     if isempty(ps)
         # no more parsers, we are finished
         retval(f, xs, s, i)
     elseif parsetype(ps[1])==Nothing || xs===nothing
         # if the inner parser ps[1] returns nothing, or we are returning nothing, then we
         # only care if the inner parser succeeds or not and can move on to the next inner parser
-        v, i′ = tryparse(NothingCb(), ps[1], s, i)
+        v, i′ = tryparse(NothingCb(), ps[1], s, i) :: Tuple{Ret{Nothing}, typeof(i)}
         if isok(v)
             ps′ = ps[2:end]
             xs′ = xs===nothing ? nothing : (xs..., val(v))
-            tryparse_seq(f, ps′, s, i′, xs′)
+            tryparse_seq(f, ps′, s, i′, xs′) :: Tuple{Ret{R}, typeof(i)}
+        else
+            reterr(f, i′)
+        end
+    elseif true
+        # Here the inner parser returns something other than nothing and we care about its
+        # value.
+        #
+        # In this strategy, we call the parser with the identity callback to get its value,
+        # append the result to `xs`, and recurse. This might have excessive allocations.
+        v, i′ = tryparse(IdentityCb{parsetype(ps[1])}(), ps[1], s, i) :: Tuple{Ret{parsetype(ps[1])}, typeof(i)}
+        if isok(v)
+            ps′ = ps[2:end]
+            xs′ = (xs..., val(v))
+            tryparse_seq(f, ps′, s, i′, xs′) :: Tuple{Ret{R}, typeof(i)}
         else
             reterr(f, i′)
         end
     else
-        # Here, the inner parser returns something other than nothing and we care about its
-        # value. We *could* just call the parser with cb_identity and append the result to xs
-        # but if the return value is not concrete this will be type-unstable and require some
-        # memory allocations. Instead, we make the callback function itself call tryparse_seq
-        # on the remaining parsers.
+        # In the previous strategy, if the return value is not concrete this will be type-
+        # unstable and require some memory allocations. Instead, we make the callback
+        # function itself call tryparse_seq on the remaining parsers.
         #
         # Essentially we are doing the following:
         #   tryparse(R, ps[1], s, i) do x1, s1, i1
@@ -464,7 +479,7 @@ tryparse_seq(f::Cb, ps::Tuple{Vararg{Parser}}, s::Src, i::Idx, xs) =
         #   v2, i2 = tryparse(ps[1], s1, i1)
         #   v3, i3 = tryparse(ps[1], s2, i2)
         #   ret(R, f((val(x1),val(x2),val(x3)), s3, i3)...)
-        tryparse(SeqCb(f, ps[2:end], xs), ps[1], s, i)
+        tryparse(SeqCb(f, ps[2:end], xs), ps[1], s, i) :: Tuple{Ret{R}, typeof(i)}
     end
 
 struct SeqCb{R,F<:Cb{R},Ps<:Tuple{Vararg{Parser}},Xs<:Tuple} <: Cb{R}
@@ -472,7 +487,7 @@ struct SeqCb{R,F<:Cb{R},Ps<:Tuple{Vararg{Parser}},Xs<:Tuple} <: Cb{R}
     ps :: Ps
     xs :: Xs
 end
-retval(f::SeqCb, x, s::Src, i::Idx) = tryparse_seq(f.f, f.ps, s, i, (f.xs..., x))
+retval(f::SeqCb{R}, x, s::Src, i::Idx) where {R} = tryparse_seq(f.f, f.ps, s, i, (f.xs..., x)) :: Tuple{Ret{R}, typeof(i)}
 
 
 """
